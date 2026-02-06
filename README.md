@@ -25,9 +25,9 @@ This motivates a **latent-utility modeling approach**.
 ## 2. Latent Fan Model (Problem 1)
 
 We introduce a latent fan utility
-$$
-\eta_{i,t} = a_{i,s} + \beta_J \tilde{J}_{i,t} + \beta_t t,
-$$
+
+$\eta_{i,t} = a_{i,s} + \beta_J \tilde{J}_{i,t} + \beta_t t,$
+
 where:
 - \( $a_{i,s}$ \) is a season-specific baseline popularity,
 - \( $\tilde{J}_{i,t}$ \) is the standardized judge score,
@@ -66,11 +66,9 @@ This reframes voting rules as **mechanisms that can be empirically tested**, rat
 ## 4. Explaining Fan Preferences (Problem 3)
 
 To interpret fan behavior, we decompose latent fan utility:
-$$
-\eta_{i,t}
-= \underbrace{\eta^{\text{lin}}_{i,t}}_{\text{performance + time}}
-+ \underbrace{\eta^{\text{ml}}_{i}}_{\text{attributes}}.
-$$
+
+$\eta_{i,t} = \underbrace{\eta^{\text{lin}}_{i,t}}_{\text{performance + time}} + \underbrace{\eta^{\text{ml}}_{i}}_{\text{attributes}}.$
+
 
 - A **linear backbone** explains judge performance and temporal trends.
 - A **GBDT residual model** captures nonlinear effects of:
@@ -86,7 +84,7 @@ This decomposition yields interpretable insights such as baseline popularity by 
 
 We propose **CHER** (Composite Hybrid Elimination Rule), a dynamic elimination system:
 
-S_{i,t} = α_J(t) J_{i,t} + α_F(t) F_{i,t} + α_M M_{i,t}.
+$S_{i,t} = α_J(t) J_{i,t} + α_F(t) F_{i,t} + α_M M_{i,t}.$
 
 where:
 - \( $\alpha_J(t)$ \) increases over the season,
