@@ -1,0 +1,1561 @@
+%% MCM/ICM Main Report (≤25 pages, includes everything except AI report)
+\documentclass[12pt]{article}
+
+% Team control number in the package option (keep)
+\usepackage[2631685]{easymcm}
+\problem{C} % <-- change to C
+
+% Fonts (pick one)
+\usepackage{mathptmx} % Times-like
+% \usepackage{mathpazo} % Palatino-like (optional alternative)
+
+
+% Core math/format packages (safe + standard)
+\usepackage{amsmath, amssymb, amsfonts}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{enumitem}
+\usepackage{float}
+\usepackage{siunitx} % units (nice for Problem C)
+\usepackage{caption}
+\usepackage{tikz}
+\usetikzlibrary{positioning, arrows.meta} 
+% Lists: compact but readable
+\setlist[itemize]{leftmargin=1.2em, itemsep=0.25em, topsep=0.3em}
+\setlist[enumerate]{leftmargin=1.4em, itemsep=0.25em, topsep=0.3em}
+
+% Title: do NOT put school/name here; keep generic
+\title{Make DWTS Great Again: Quantifying Latent Fan Preferences and Designing an Optimal Elimination System}
+\author{} % keep empty for anonymity
+\date{}   % optional: keep empty
+
+\begin{document}
+
+% ===== Summary Sheet / Executive Summary =====
+\begin{abstract}
+
+As a globally influential entertainment phenomenon, \textit{Dancing with the Stars} (DWTS) has long been criticized for \textbf{opaque scoring} and \textbf{perceived unfairness} in its elimination system. To address these concerns, we develop a data-mining framework grounded in \textbf{Random Utility Theory (RUT)}. Using binary elimination outcomes, we reconstruct latent fan preferences and sequentially tackle four tasks—fan-vote inversion, voting-rule evaluation, bias attribution, and format redesign—thereby providing a quantitative basis for assessing competitive fairness.
+
+\textbf{Problem 1.} Because the true number of fans is fundamentally unobservable, we use the elimination mechanism to identify relative support shares and propose a \textbf{Latent Fan-Share Utility Model}. Assuming Poisson votes per contestant, we map latent utilities to vote shares via Softmax and estimate parameters with an \textbf{inequality-based MLE}. Across \textbf{231 eliminations from 34 seasons}, the model achieves \textbf{72.7\%} elimination-prediction accuracy and \textbf{95.6\%} \textbf{Pairwise Satisfaction}, indicating effective denoising and recovery of fan intent.
+
+\textbf{Problem 2.} Based on reconstructed fan shares, we conduct full-sample \textbf{counterfactual simulations} comparing \textbf{Rank-Sum} and \textbf{Percent-Sum} aggregation rules. Rank-Sum discards vote-magnitude information and matches historical eliminations at only \textbf{64.5\%}, whereas Percent-Sum is more faithful to fan preference signals and reaches \textbf{76.6\%}. We further show that \textbf{Bottom-Two plus Judges' Choice (BT+J)} amplifies subjective discretion and reduces outcome stability.
+
+\textbf{Problem 3.} EDA reveals strong nonlinearities between fan support and attributes such as age, professional background, and partner effects; we therefore fit a \textbf{GBDT} model to capture nonlinear patterns and interactions. Feature-importance analysis shows that fan voting is driven primarily by \textbf{age} (a nonlinearly diminishing advantage for younger contestants), \textbf{industry background} (entertainment/sports celebrities outperform others), and \textbf{partner popularity}, confirming that built-in popularity can overshadow technical skill under the current format.
+
+\textbf{Problem 4.} To balance competitive fairness with entertainment suspense, we propose a \textbf{Constrained Hybrid Elimination Rule (CHER)}. We stabilize outcomes via rank-based aggregation while preserving vote-magnitude information through a \textbf{momentum term} and a threshold-based \textbf{dual-shield} mechanism that protects contestants with exceptionally high technical scores or sharply separated fan support. Simulations place CHER on the \textbf{Pareto frontier} of the accuracy--conflict trade-off, substantially reducing random eliminations while retaining \textbf{over 90\%} of key suspense moments.
+
+\textbf{Keywords:} latent utility model; inequality-based maximum likelihood estimation; counterfactual simulation; GBDT; Constrained Hybrid Elimination Rule (CHER)
+\end{abstract}
+
+\maketitle
+\tableofcontents
+\section{Introduction}
+\subsection{Problem Background}
+
+“I was the worst dancer. I take pride in that.”
+— Bobby Bones, DWTS Season 27 champion.
+
+\textit{Dancing with the Stars} (DWTS) pairs celebrities with professional dancers and eliminates one couple each week based on a blend of judges’ scores and audience votes. However, the show does not disclose vote totals and reveals only the final elimination, making the decision process effectively opaque. :contentReference[oaicite:0]{index=0}
+
+This opacity matters because DWTS outcomes sometimes conflict with technical dance quality. In Season 2, Jerry Rice reached the finals despite repeatedly ranking near the bottom with judges, prompting the show to revise its combination method. More recently, Bobby Bones won Season 27 with consistently low judges’ scores, triggering renewed criticism and further adjustments to the elimination format. :contentReference[oaicite:1]{index=1}
+
+These cases suggest that success depends on more than performance alone. To understand what truly drives results, we need a quantitative model that infers the hidden fan-vote influence from observed eliminations and judges’ scores, and then tests how different aggregation schemes shift power between expert evaluation and popularity.
+
+
+\subsection{Problem Restatement}
+
+DWTS is often criticized for opaque scoring and perceived unfair eliminations; our goal is to use observed judges' scores and binary elimination outcomes to recover fan support and improve the elimination format.
+
+\begin{enumerate}
+  \item \textbf{Fan-share inversion:} infer relative fan vote shares $F_{i,s,t}$ (and standardized judges' scores $\tilde{J}_{i,s,t}$) from elimination outcomes.
+  \item \textbf{Rule evaluation:} using reconstructed $F_{i,s,t}$, compare alternative aggregation rules via counterfactual simulation and quantify outcome differences.
+  \item \textbf{Bias attribution:} explain fan support by modeling attribute effects (e.g., age, background, partner) with a nonlinear predictor.
+  \item \textbf{Format redesign:} propose and simulate an improved rule (CHER) to reduce random eliminations while preserving suspense.
+\end{enumerate}
+
+
+
+
+\subsection{Our Work}
+This problem requires us to recover fan shares in order to design a better competition format for a reality TV show.
+Our work consists of the following components:
+(1) Using the elimination mechanism and observed outcomes to infer the completely latent fan shares, while standardizing the judges' scores.
+(2) Comparing two different score-combination methods, and analyzing how their differences lead to different competition outcomes, as well as how controversial celebrities are affected under each method.
+(3) Designing a constrained hybrid elimination rule that incorporates a momentum-based bonus mechanism and a threshold-based dual-protection mechanism.
+
+To avoid overly complex descriptions and to present our workflow in an intuitive manner, the overall process is summarized in Figure~\ref{fig:workflow}.
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{graphs/graph.drawio.png}
+    \caption{
+    % 写你的caption（你想写啥写啥）
+    }
+    \label{fig:workflow}
+\end{figure}
+
+
+
+% ===== 2. Data and Assumptions =====
+
+\section{Assumptions}
+
+\begin{enumerate}[label=(H\arabic*)]
+
+\item \textbf{Weekly fan choice probabilities.}
+In each elimination event $(s,t)$, fan behaviour is summarized by a probability
+vector $F_{i,s,t}$ over the active set $\mathcal{A}_{s,t}$, with individual fan
+votes conditionally independent given $(s,t)$ and
+$\sum_{i \in \mathcal{A}_{s,t}} F_{i,s,t} = 1$.
+
+\item \textbf{Linear latent-utility with season-constant baseline.}
+Fan preferences are driven by a latent utility index
+\[
+\eta_{i,s,t} = a_{i,s} + \beta_T \widetilde J_{i,s,t} + \beta_w t,
+\]
+where $a_{i,s}$ is constant within a season and $\widetilde J_{i,s,t}$ is the
+within-week standardized judges' score.
+
+\item \textbf{Poisson--random-utility model for fan votes.}
+Aggregate vote counts satisfy
+\[
+  V_{i,s,t} \sim \mathrm{Poisson}\bigl(N_{s,t} F_{i,s,t}\bigr),
+\]
+where $N_{s,t}$ is the (unobserved) total number of fan votes in event $(s,t)$.
+Individual fan utilities are
+\[
+  U_{i,s,t} = \eta_{i,s,t} + \varepsilon_{i,s,t}, \qquad
+  \varepsilon_{i,s,t} \overset{\mathrm{i.i.d.}}{\sim} \mathrm{Gumbel}(0,\sigma).
+\]
+Under this assumption, relative voting intensities induce multinomial-logit
+choice probabilities
+\[
+  F_{i,s,t}
+  =
+  \frac{\exp(\eta_{i,s,t} / \sigma)}
+       {\sum_{j \in \mathcal{A}_{s,t}} \exp(\eta_{j,s,t} / \sigma)},
+\]
+and we work without loss of generality with $\sigma = 1$.
+
+
+\item \textbf{Baseline popularity as log fan mass.}
+The contestant-specific term $a_{i,s}$ can be interpreted as a log baseline fan
+mass $N_{i,s} = \exp(a_{i,s})$ that is stable within a season and partially
+explained by observable attributes $x_{i,s}$ (age, industry, professional
+partner, home country, etc.).
+
+\item \textbf{Elimination determined by combined judge--fan scores.}
+In elimination weeks with a unique exit, the historically eliminated contestant
+$k_{s,t}$ is the unique worst contestant according to the show's aggregation
+rule:
+Percent-Sum weeks use the smallest total score
+$S^{\mathrm{pct}}_{i,s,t}$, and Rank-Sum weeks use the largest combined rank sum
+$C_{i,s,t}$. No additional hidden tie-breaking is modelled.
+
+\item \textbf{Certainty via pairwise logistic comparisons.}
+For each elimination event $(s,t)$ we define pairwise loss probabilities
+\[
+\Pr(i \text{ loses to } j \mid t)
+=
+sigmoid\!\big(\alpha (S_{j,s,t} - S_{i,s,t})\big), \qquad \alpha = 20.
+\]
+These pairwise probabilities are not assumed to be probabilistically independent;
+instead, their product is used as a monotone aggregation that increases when
+contestant $i$ is consistently dominated by others in score space.
+The resulting raw elimination weight
+\[
+w_{i,s,t} = \prod_{j \neq i} \Pr(i \text{ loses to } j \mid t)
+\]
+is normalized to obtain model-implied elimination probabilities
+$p_{i,s,t} = w_{i,s,t} / \sum_k w_{k,s,t}$.
+
+\item \textbf{Signal--noise decomposition of fan support.}
+Fan shares are decomposed as
+\[
+F_{i,s,t} = \bar F_{i,s,t} + \xi_{i,s,t},
+\]
+where $\bar F_{i,s,t}$ captures persistent preference and
+$\xi_{i,s,t}$ represents week-to-week disturbances with zero mean.
+Aggregation rules differ in how sensitive they are to these disturbances.
+
+\item \textbf{Reconstructed fan shares as underlying preferences.}
+When comparing Rank Sum, Percent Sum, BT+J, and the proposed CHER system, we treat
+the reconstructed fan shares $\widehat F_{i,s,t}$ from Problem~1 as the
+underlying fan preferences and apply each rule uniformly to all seasons to
+compute counterfactual eliminations and placements.
+
+\item \textbf{Attribute-based models for baseline popularity and performance.}
+The estimated baseline terms $\widehat a_{i,s}$, average standardized judges'
+scores $\overline{\widetilde J}_{i,s}$, and elimination weeks $W_{i,s}$ are
+assumed to be partially explainable by contestant attributes $x_{i,s}$ via both
+linear regressions and gradient boosting decision trees. Residuals are treated as
+random noise with no systematic dependence on $x_{i,s}$.
+
+\item \textbf{Structure of the constrained hybrid elimination rule (CHER).}
+The proposed weekly elimination mechanism is defined by:
+(i) temperature-controlled softmax fan shares $F^{(\gamma)}_{i,s,t}$ based on
+$\eta_{i,s,t}$,
+(ii) normalized judges' scores $J^{\mathrm{pct}}_{i,s,t}$,
+(iii) a nonnegative momentum term $M_{i,s,t}$ computed from recent fan-share
+history,
+(iv) phase-dependent aggregation weights on judges, fans, and momentum, and
+(v) explicit judge and fan ``shields'' that protect top performers before a
+bottom-two set is formed, within which the final elimination is decided by fan
+support.
+We assume this family of rules is a plausible and implementable alternative for
+future seasons.
+
+\end{enumerate}
+
+\section{Notation}
+\begin{table}[H]
+\centering
+\caption{Unified Notation (Problems 1--2: DWTS Fan Share Reconstruction and Voting Rules)}
+\label{tab:notation_unified}
+\begin{tabular}{cl}
+\toprule
+Symbol & Definition \\
+\midrule
+$s$ & season index \\
+$t$ & week index within season $s$ \\
+$i,j$ & contestant/couple indices \\
+$\mathcal{A}_{s,t}$ & set of contestants still active (alive) in season $s$, week $t$ \\
+$k_{s,t}$ & historically eliminated contestant in season $s$, week $t$ \\
+$\mathcal{T}_{\mathrm{elim}}$ & set of elimination events $(s,t)$ with exactly one elimination and $|\mathcal{A}_{s,t}|\ge 2$ \\
+
+$J_{i,s,t}$ & total judges' score of contestant $i$ in season $s$, week $t$ (observed) \\
+$\overline{J}_{s,t}$ & mean of $\{J_{i,s,t}: i\in\mathcal{A}_{s,t}\}$ \\
+$\operatorname{sd}(J_{s,t})$ & standard deviation of $\{J_{i,s,t}: i\in\mathcal{A}_{s,t}\}$ \\
+$\widetilde{J}_{i,s,t}$ & standardized judges' score (z-score): $\widetilde{J}_{i,s,t}=\dfrac{J_{i,s,t}-\overline{J}_{s,t}}{\operatorname{sd}(J_{s,t})}$ \\
+
+$a_{i,s}$ & contestant-specific baseline fan strength in season $s$ (time-invariant within season) \\
+$\beta_T$ & coefficient on standardized judges' score $\widetilde{J}_{i,s,t}$ \\
+$\beta_w$ & coefficient on week index $t$ \\
+$\eta_{i,s,t}$ & latent fan utility: $\eta_{i,s,t}=a_{i,s}+\beta_T\widetilde{J}_{i,s,t}+\beta_w t$ \\
+$sigmoid(x)$ & logistic sigmoid: $sigmoid(x)=(1+e^{-x})^{-1}$ \\
+
+$F_{i,s,t}$ & latent fan vote share (probability a random fan vote goes to $i$ in $(s,t)$), $\sum_{i\in\mathcal{A}_{s,t}}F_{i,s,t}=1$ \\
+$F^{\text{naive}}_{i,s,t}$ & naive uniform fan share: $F^{\text{naive}}_{i,s,t}=1/|\mathcal{A}_{s,t}|$ \\
+
+$J^{\text{pct}}_{i,s,t}$ & normalized judges' share: $J^{\text{pct}}_{i,s,t}=\dfrac{J_{i,s,t}}{\sum_{j\in\mathcal{A}_{s,t}}J_{j,s,t}}$ \\
+$S^{\text{pct}}_{i,s,t}$ & Percent-Sum total score: $S^{\text{pct}}_{i,s,t}=J^{\text{pct}}_{i,s,t}+F_{i,s,t}$ (smaller is worse) \\
+$\Delta_{j,s,t}$ & survivor--eliminated gap: $\Delta_{j,s,t}=S^{\text{pct}}_{j,s,t}-S^{\text{pct}}_{k_{s,t},s,t}$ \\
+
+$r^{J}_{i,s,t}$ & judges' rank by $J_{i,s,t}$ (1 is best) \\
+$r^{F}_{i,s,t}$ & fan rank by $F_{i,s,t}$ (1 is best) \\
+$C_{i,s,t}$ & Rank-Sum combined score: $C_{i,s,t}=r^{J}_{i,s,t}+r^{F}_{i,s,t}$ (larger is worse) \\
+
+$I_{s,t}$ & elimination hit indicator (model predicts the correct eliminated contestant in event $(s,t)$) \\
+$A_{\text{model}}$ & elimination accuracy over $\mathcal{T}_{\mathrm{elim}}$ \\
+
+$\alpha$ & certainty softness parameter for pairwise comparisons (e.g., $\alpha=20$) \\
+$w_{i,s,t}$ & raw elimination weight (pairwise product form) \\
+$p_{i,s,t}$ & model-implied probability that $i$ is eliminated in event $(s,t)$ \\
+$\mathrm{Certainty}_{s,t}$ & elimination certainty for observed elimination: $\mathrm{Certainty}_{s,t}=p_{k_{s,t},s,t}$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+
+% ===== 3. Probelm 1
+% ===== 3. Baseline =====
+\section{Problem 1: Estimate Fans}
+
+The central difficulty of the DWTS data is that the \emph{fan votes} are never observed.
+Each week we see the judges' scores $J_{i,s,t}$ and which contestant $k_{s,t}$ is eliminated, but the underlying fan support $F_{i,s,t}$ that drives this outcome is hidden.
+Problem~1 asks us to reconstruct these latent fan vote shares.
+
+We proceed in two steps.
+First, we define a simple rule-based benchmark that ignores fan heterogeneity.
+This gives a transparent lower bound on performance.
+Second, we introduce a latent-fan model in which $F_{i,s,t}$ is a softmax function of a utility index, and we estimate parameters by enforcing historical elimination outcomes via an inequality-based likelihood.
+
+\subsection{Naive Benchmark: Judge-Only Elimination}
+
+A natural baseline is to assume that fan votes are negligible or roughly equal across all contestants in a given week.
+In this case, the show outcome is driven purely by the judges:
+
+\begin{itemize}
+  \item For each event $(s,t)$, compute the total judges' score $J_{i,s,t}$ for each $i\in\mathcal{A}_{s,t}$.
+  \item Predict that the contestant with the lowest $J_{i,s,t}$ is eliminated.
+\end{itemize}
+
+Equivalently, this is the special case where all contestants receive the same fan share,
+\[
+F^{\text{naive}}_{i,s,t}=\frac{1}{|\mathcal{A}_{s,t}|},
+\qquad i\in\mathcal{A}_{s,t},
+\]
+so the fan term cancels out when ranking contestants.
+
+This benchmark is ``fair'' in two senses.
+First, it is what one would obtain by naively applying the public scoring rules without modeling hidden fans.
+Second, exploratory analysis shows that a judge-only rule fails to explain a substantial fraction of historical eliminations (``upsets'').
+Any useful fan model must therefore improve on this naive predictor in terms of consistency with observed eliminations.
+
+\subsection{Model: Latent Fan-Share Utility (Reconstructing the Invisible)}
+
+\paragraph{Goal.}
+Our objective is to recover the \emph{relative} fan support
+\[
+F_{i,s,t}=\Pr(\text{a random fan vote in event }(s,t)\text{ goes to contestant }i),
+\]
+for each $i\in\mathcal{A}_{s,t}$, with $F_{i,s,t}\in[0,1]$ and
+$\sum_{i\in\mathcal{A}_{s,t}}F_{i,s,t}=1$.
+
+\paragraph{Latent-utility specification.}
+We assume that fan preferences are summarized by a latent index
+\begin{equation}
+  \eta_{i,s,t}
+  = a_{i,s}
+  + \beta_T \widetilde{J}_{i,s,t}
+  + \beta_w t,
+  \label{eq:eta_unified_p1_new}
+\end{equation}
+where $a_{i,s}$ captures persistent popularity, $\widetilde{J}_{i,s,t}$ is the
+within-event standardized judges' score, and $t$ is the week index.
+
+\paragraph{Fan-share model (softmax).}
+Fan votes respond only to \emph{relative} preferences, so we map utilities to
+probabilities with the multinomial-logit form:
+\begin{equation}
+  F_{i,s,t}
+  = \frac{\exp(\eta_{i,s,t})}
+         {\sum_{j\in\mathcal{A}_{s,t}}\exp(\eta_{j,s,t})}.
+  \label{eq:softmax_unified_p1_new}
+\end{equation}
+Rescaling all utilities by a positive constant leaves probabilities unchanged,
+so we normalize the scale to $\sigma=1$ without loss of generality.
+
+\paragraph{Random-utility foundation.}
+The specification~\eqref{eq:softmax_unified_p1_new} has a structural interpretation.
+Let
+\[
+U_{i,s,t}=\eta_{i,s,t}+\varepsilon_{i,s,t},
+\qquad 
+\varepsilon_{i,s,t}\overset{\mathrm{i.i.d.}}{\sim}\mathrm{Gumbel}(0,\sigma).
+\]
+Under McFadden’s random-utility model, the choice probability that a randomly
+selected fan chooses contestant $i$ is exactly the softmax form in
+\eqref{eq:softmax_unified_p1_new}.  The disturbances represent unobserved
+week-specific shocks (media exposure, social coordination, etc.).
+
+\paragraph{Link to vote counts (Poisson voting model).}
+Let $V_{i,s,t}$ be the number of fan votes for contestant $i$ in event $(s,t)$
+and let $N_{s,t}$ be the total number of fan votes.  We assume
+\[
+V_{i,s,t}\sim \mathrm{Poisson}\!\left(N_{s,t}\lambda_{i,s,t}\right),
+\qquad
+\lambda_{i,s,t}\propto \exp(\eta_{i,s,t}).
+\]
+Writing $\log \lambda_{i,s,t} = \eta_{i,s,t} - c_{s,t}$ with
+$c_{s,t}=\log N_{s,t}$ (a week-specific constant), the log-intensity decomposes
+into a persistent component $a_{i,s}\approx \log N_i$ and a performance-driven
+component governed by judges’ scores and week effects.  Normalizing the
+intensities yields $F_{i,s,t}$ in~\eqref{eq:softmax_unified_p1_new}.
+
+\paragraph{Why estimate $F$ instead of $V$.}
+Fan \emph{shares} are invariant to the unknown scale $N_{s,t}$ and are the only
+quantities relevant for both percentage-based and rank-based elimination rules.
+Absolute vote totals fluctuate sharply across seasons, airtime, and media
+exposure, while relative shares remain well defined and comparable.  Modeling
+$F_{i,s,t}$ thus provides a unified representation of fan influence across all
+voting systems in the competition.
+
+\subsection{Consistency}
+
+Consistency evaluates how well the reconstructed fan shares
+$\widehat{F}_{i,s,t}$ reproduce historical eliminations once combined with judges’
+scores under the show’s scoring rules. Because true vote totals are unobserved,
+elimination outcomes form the only direct ground truth—mirroring standard
+validation practice in discrete-choice models.
+
+Let $\mathcal{T}_{\mathrm{elim}}$ be the set of weeks with exactly one eliminated
+contestant. For each $(s,t)$, let $k_{s,t}$ be the observed loser and
+$\mathcal{A}_{s,t}$ the active contestant set. We evaluate the model under both
+Percent-Sum and Rank-Sum scoring; all scoring formulas, rank definitions, and
+summary statistics are collected in \textit{Appendix~A} to streamline exposition.
+
+For each scoring scheme, the model produces a predicted loser
+$\widehat{k}_{s,t}$ based solely on judges’ scores and reconstructed fan shares.
+Event-level consistency is measured by the hit indicator
+$I_{s,t}=\mathbf{1}\{\widehat{k}_{s,t}=k_{s,t}\}$, aggregated into the overall hit
+rate $A_{\mathrm{model}}$. Additional diagnostics include the rank position of
+the eliminated contestant, the average worst percentile $\overline{q}$, pairwise
+inequality satisfaction $\overline{s}$, and elimination margins.
+
+\paragraph{Empirical results.}
+Across $231$ events, the reconstructed shares achieve
+\textbf{72.7\% accuracy}. Eliminated contestants are typically ranked last
+(median worst rank $=1$), with an average worst percentile of $\mathbf{0.17}$ and
+pairwise-satisfaction rate of $\mathbf{95.6\%}$. The consistency plots in
+Figure~\ref{fig:consistency} and summary statistics in
+Table~\ref{tab:consistency_summary} show that the model’s utilities produce
+scores that strongly align with the historical elimination pattern.
+
+\paragraph{Interpretation.}
+Under the Poisson–random-utility model, $\widehat{F}_{i,s,t}$ represents the
+model-implied probability of a fan vote. If these shares faithfully capture
+latent preferences, then combining them with judges’ scores should reproduce real
+eliminations. The high accuracy, strong percentile alignment, and near-complete
+pairwise satisfaction indicate that the reconstructed fan shares successfully
+explain the observed elimination sequence. This establishes
+$\widehat{F}_{i,s,t}$ as a reliable foundation for all subsequent rule comparisons
+and counterfactual analyses.
+
+\subsection{Certainty of Fan Estimates}
+
+\paragraph{Event-level certainty.}
+To evaluate how sharply the reconstructed fan shares $\widehat{F}_{i,s,t}$ explain
+historical eliminations, we measure \emph{event-level certainty}: the probability the
+model assigns to the contestant who is actually eliminated. Because true vote totals are
+unobserved, this is the appropriate observable notion of confidence.
+
+For each elimination week $(s,t)$ with alive set $\mathcal{A}_{s,t}$, we define a
+combined judge–fan score
+\[
+S_{i,s,t}
+=
+\widehat{F}_{i,s,t}
++
+\frac{J_{i,s,t}}{\sum_{j\in\mathcal{A}_{s,t}} J_{j,s,t}},
+\]
+where smaller values indicate weaker support.
+
+\paragraph{Pairwise comparisons and elimination probabilities.}
+Following classical paired-comparison models (Bradley--Terry \cite{BradleyTerry1952},
+Plackett--Luce \cite{Plackett1975}), score differences are converted into pairwise
+loss probabilities using a logistic comparison with sharpness parameter $\alpha=20$.
+These pairwise relations yield unnormalized elimination weights which, after
+Gibbs normalization (LeCun et al.\ \cite{LeCun2006}), define a probability
+distribution
+$p_{i,s,t}$ over contestants being eliminated in week $t$.
+
+\paragraph{Certainty measure.}
+If $k_{s,t}$ is the observed loser, the event-level certainty is
+\[
+\mathrm{Certainty}_{s,t} = p_{k_{s,t},s,t}.
+\]
+Large values indicate predictable eliminations; small values indicate competitive or
+surprising weeks.
+
+\paragraph{Aggregate behaviour.}
+Across all weeks with a unique elimination, we report:
+\begin{itemize}
+\item number of events $T$,
+\item event-level accuracy $\Pr(\arg\max_i p_{i,s,t}=k_{s,t})$,
+\item mean and median certainty,
+\item total log-likelihood $\sum_{(s,t)} \log p_{k_{s,t},s,t}$,
+\item and a uniform baseline $\mathbb{E}[1/|\mathcal{A}_{s,t}|]$.
+\end{itemize}
+These summarize how strongly the reconstructed fan dynamics support each
+historical elimination, complementing the consistency analysis.
+
+\paragraph{Interpretation.}
+The certainty analysis quantifies \emph{how confident} the reconstructed
+Poisson–random-utility model is about each elimination event. The model selects the
+correct loser in roughly $70.8\%$ of weeks and assigns mean certainty $0.440$, more
+than triple the uniform baseline $0.128$. Even in ambiguous weeks, the eliminated
+contestant typically receives a substantial share of the elimination probability,
+indicating that disagreements reflect genuine week-to-week competitiveness rather
+than model failure.
+
+Overall, the certainty results show that the reconstructed fan shares capture the
+main structure of elimination risk across seasons. This provides an outcome-based
+validation of the fan estimates and supports their use in cross-rule comparisons and
+counterfactual analyses.
+
+% ===== 4. Main Model(s) =====
+\section{Problem 2: Examine Voting Methods}
+
+In this section, we quantitatively evaluate the two historical voting methods: the \textbf{Rank-Based} and \textbf{Percentage-Based} systems. Using the fan votes estimated in Problem 1, we conduct a counterfactual simulation across all 34 seasons to measure the consistency and bias of each method. We also examine the impact of the ``Bottom-Two'' intervention on controversial eliminations. Based on these analyses, we identify the mechanism that best balances fairness with fan engagement to provide a final recommendation.
+
+\subsection{Comparison of Rank-Based and Percentage-Based Voting Methods}
+
+We now investigate how the method used to combine judges' scores and fan votes affects
+elimination outcomes. Using the reconstructed fan shares from Section~4.1, we apply both the
+\emph{rank-based} and \emph{percentage-based} rules to every season, regardless of which
+mechanism was officially used. This provides a clean, ceteris-paribus comparison of the two
+aggregation schemes.
+
+\begin{figure}[H]
+  \centering
+
+  \includegraphics[width=0.75\textwidth]{graphs/q2_combined_umn.png}
+\caption{
+Comparison of rank-based and percentage-based aggregation across seasons.
+\textbf{Top:} Per-season elimination accuracy, where accuracy is the fraction of
+weeks in which the predicted loser matches the observed elimination. Maroon =
+Rank Sum; gold = Percent Sum. Points show season-level accuracies; curves show
+smoothed trends.
+\textbf{Bottom:} Accuracy gap
+$\mathrm{Gap}_s=\mathrm{Accuracy}^{\mathrm{pct}}_s-\mathrm{Accuracy}^{\mathrm{rank}}_s$.
+Positive values favor Percent Sum. Black stars indicate seasons with at least
+one ``zombie'' contestant. Overall, Percent Sum outperforms Rank Sum in most
+seasons.}
+  \label{fig:q2_combined}
+
+\end{figure}
+
+\subsubsection{Aggregation Rules}
+
+Let $i$ index contestants and $t$ index weeks within season $s$. For each contestant, let
+\[
+J_{i,s,t} \quad \text{be the total judges' score}, \qquad
+F_{i,s,t} \quad \text{be the estimated fan vote share},
+\]
+with $\sum_i F_{i,s,t} = 1$ within each week.
+
+\paragraph{Rank-based rule.}
+Contestants are ranked separately by judges and fans:
+\[
+R^J_{i,s,t} = \mathrm{rank}_{\mathrm{desc}}(J_{i,s,t}), \qquad
+R^F_{i,s,t} = \mathrm{rank}_{\mathrm{desc}}(F_{i,s,t}),
+\]
+where rank $1$ denotes the strongest performance and ties use the ``min'' convention. The
+combined rank score is
+\[
+S^{\mathrm{rank}}_{i,s,t} = R^J_{i,s,t} + R^F_{i,s,t},
+\]
+and the contestant with the \emph{largest} $S^{\mathrm{rank}}_{i,s,t}$ is eliminated.
+
+\paragraph{Percentage-based rule.}
+Judges' scores are normalized within each week:
+\[
+P^J_{i,s,t} = \frac{J_{i,s,t}}{\sum_k J_{k,s,t}},
+\]
+and combined additively with fan shares:
+\[
+S^{\mathrm{pct}}_{i,s,t} = P^J_{i,s,t} + F_{i,s,t}.
+\]
+The contestant with the \emph{smallest} $S^{\mathrm{pct}}_{i,s,t}$ is eliminated.
+
+\subsubsection{Frequency and Nature of Disagreements}
+
+Across all seasons there are $335$ elimination weeks with a unique exit. Applying both rules to
+the same inputs yields different eliminated contestants in $95$ weeks, a disagreement rate of
+\[
+\frac{95}{335} \approx 28.4\%.
+\]
+Thus, in nearly one out of three weeks, the choice of aggregation rule alone flips the
+elimination outcome.
+
+When the rules disagree, we compare the contestants eliminated by each method. On average,
+the contestant eliminated by the rank-based rule has
+\[
+\Delta F = F_{\mathrm{rank}} - F_{\mathrm{pct}} \approx 0.039,
+\]
+about \textbf{3.9 percentage points more fan support} than the contestant eliminated under the
+percentage-based rule. At the same time, the rank-eliminated contestant enjoys roughly
+\[
+\Delta J = J_{\mathrm{rank}} - J_{\mathrm{pct}} \approx 3
+\]
+points higher judges' scores. In other words, the rank-based rule compresses large fan-vote
+margins and gives relatively more weight to judges, whereas the percentage-based rule preserves
+the magnitude of fan support.
+
+\subsubsection{Agreement with Observed Eliminations}
+
+To assess which rule better matches the actual show, we compare each method's predicted
+elimination with the observed loser in weeks with exactly one eliminated contestant. Let
+$\mathbb{I}(\cdot)$ denote the indicator function and $T$ the number of such weeks. We define
+\[
+\mathrm{Accuracy}
+=
+\frac{1}{T}
+\sum_{t=1}^{T}
+\mathbb{I}\bigl(\text{predicted elimination}_t
+               = \text{observed elimination}_t\bigr).
+\]
+
+Across all seasons, the percentage-based method achieves
+$\mathrm{Accuracy}_{\mathrm{pct}} = 76.6\%$,
+while the rank-based method achieves only $\mathrm{Accuracy}_{\mathrm{rank}} = 64.5\%$$.
+
+Thus the observed eliminations align much more closely with percentage aggregation.
+
+The top panel of Figure~\ref{fig:q2_combined} shows per-season accuracy for both methods.
+Although performance varies by season, the percentage-based rule typically matches or
+outperforms the rank-based rule, especially in later seasons.
+
+
+\subsubsection{Seasonal Trends and ``Zombie'' Contestants}
+
+The bottom panel of Figure~\ref{fig:q2_combined} plots
+\[
+\mathrm{Gap}_s
+=
+\mathrm{Accuracy}^{\mathrm{pct}}_s
+-
+\mathrm{Accuracy}^{\mathrm{rank}}_s,
+\]
+the per-season accuracy gap between the two rules. Most seasons have $\mathrm{Gap}_s>0$,
+showing that percentage aggregation more closely matches observed eliminations. Season~27 exhibits
+an especially large positive gap, consistent with strong fan-driven dynamics.
+
+To highlight tangible consequences, we identify \emph{zombie contestants}—couples who would be
+eliminated under the percentage-based rule but survive in the actual show. Seasons containing at
+least one such case are marked by black stars in Figure~\ref{fig:q2_combined}. Prominent examples
+include Bristol Palin (Season~11) and Bobby Bones (Season~27), illustrating how deviations from
+percentage aggregation—through rank-based scoring or judge intervention—can preserve contestants
+with weaker technical performance but strong fan narratives.
+
+\paragraph{Interpretation.}
+Holding reconstructed fan shares $F_{i,s,t}$ fixed and varying only the aggregation rule isolates
+its impact. The results show that: (i) the two rules disagree in roughly $28\%$ of elimination
+weeks; (ii) when disagreements occur, the rank-based rule disproportionately eliminates
+contestants with \emph{higher} fan support and slightly \emph{better} judges' scores; and (iii)
+percentage aggregation aligns more closely with historical eliminations, especially in seasons
+featuring zombie contestants.
+
+These patterns indicate that the show’s effective elimination dynamics are better captured by the
+percentage-based rule, which preserves vote magnitudes and reproduces observed outcomes more
+faithfully—directly resolving the second question of Problem~2.
+
+
+\subsection{Extended Comparison of Voting Methods: BT+J, Placements, and Controversy}
+\label{subsec:BTJ_placement_controversy}
+
+This section compares three elimination mechanisms applied to the same reconstructed fan
+shares $F_{i,s,t}$ and judges’ scores: Percent Sum, Rank Sum, and the Bottom-Two plus Judge
+(BT+J) rule. The comparison focuses on elimination accuracy, season-long placements, and
+judge–fan disagreement, allowing us to isolate how each rule reshapes competition outcomes.
+
+\subsubsection{Bottom-Two plus Judge (BT+J) Rule}
+
+BT+J formalizes the show’s judge-override step.  
+Given Percent Sum scores
+\[
+S^{\mathrm{pct}}_{i,s,t}
+=
+\frac{J_{i,s,t}}{\sum_{j\in\mathcal{A}_{s,t}}J_{j,s,t}} + F_{i,s,t},
+\]
+define $B_{s,t}$ as the two contestants with the smallest $S^{\mathrm{pct}}_{i,s,t}$.  
+Judges then eliminate
+\[
+k^{\mathrm{BTJ}}_{s,t}
+=
+\arg\min_{i\in B_{s,t}} J_{i,s,t},
+\]
+so the weaker of the bottom two (by judge score) is removed.  
+This coincides with Percent Sum when judge–fan signals agree but diverges otherwise.
+
+\subsubsection{Elimination Timing and Final Placement}
+
+To evaluate full-season effects, let $W^{(m)}_{i,s}$ be the elimination week of contestant $i$
+under rule $m\in\{\mathrm{Obs},\mathrm{Rank},\mathrm{Pct},\mathrm{BTJ}\}$, with non-eliminated
+contestants assigned the final week. Placement is then
+\[
+\mathrm{Place}^{(m)}_{i,s}
+=
+1 + \#\{j: W^{(m)}_{j,s} < W^{(m)}_{i,s}\},
+\]
+which provides a consistent method for cross-rule comparison.  
+This reveals how each mechanism shifts trajectories beyond individual weekly outcomes.
+
+\subsubsection{Judge–Fan Controversy Index}
+
+To quantify disagreement between judges and fans, define  
+\[
+D_{i,s,t}
+=
+R^J_{i,s,t} - R^F_{i,s,t},
+\]
+where $R^J$ and $R^F$ rank contestants by judges’ scores and fan shares (1 = strongest).  
+For each contestant,
+\[
+\overline{|D|}_{i,s}
+=
+\frac{1}{T_{i,s}}\sum_t |D_{i,s,t}|,\qquad
+D^{\max}_{i,s}
+=
+\max_t |D_{i,s,t}|,
+\]
+summarize persistent and peak disagreement.  
+Large values identify contestants whose trajectories systematically diverge between judges’
+evaluations and reconstructed fan sentiment.
+
+\subsubsection{Global Comparison of Methods}
+
+Figure~\ref{fig:q2_gap_overall} reports seasonal accuracy gaps relative to Rank Sum:
+\[
+\Delta^{\mathrm{pct}}_s
+=
+\mathrm{Accuracy}^{\mathrm{Pct}}_s - \mathrm{Accuracy}^{\mathrm{Rank}}_s,
+\qquad
+\Delta^{\mathrm{BTJ}}_s
+=
+\mathrm{Accuracy}^{\mathrm{BTJ}}_s - \mathrm{Accuracy}^{\mathrm{Rank}}_s.
+\]
+Most seasons satisfy $\Delta^{\mathrm{pct}}_s>0$, indicating that Percent Sum fits realized
+eliminations more closely.  
+BT+J generally reduces alignment by overriding strong fan support, pushing outcomes away from
+fan-implied predictions.
+
+Season-aggregated accuracy shows a consistent ordering:
+Percent Sum highest, Rank Sum intermediate, BT+J lowest.  
+This highlights two key structural facts: preserving fan-vote \emph{magnitudes} improves
+predictive fidelity, whereas bottom-two overrides tend to drive divergence from combined
+judge–fan sentiment.
+
+\subsubsection{Extraordinary Contestants}
+
+Table~\ref{tab:extraordinary} reports placements for widely discussed contestants with strong
+judge–fan disagreement. Their large $|D_{i,s,t}|$ values make rule differences especially
+visible: all counterfactual rules eliminate them earlier than the show actually did, with Rank
+Sum penalizing them the most.  
+These cases explain why certain seasons—especially those featuring polarizing contestants such
+as Bristol Palin or Bobby Bones—generate large discrepancies between alternative rules and
+public controversy.
+
+\paragraph{Interpretation.}
+This comparison isolates the role of the elimination rule by applying Rank Sum, Percent Sum,
+and BT+J to identical reconstructed fan shares. Percent Sum consistently matches historical
+outcomes best because it preserves vote magnitudes; BT+J diverges by overriding weakly
+judged but strongly supported contestants.  
+Contestants with large judge–fan gaps amplify these structural differences and clarify why
+certain eliminations became high-profile controversies.  
+Overall, percentage aggregation most accurately reflects the joint influence of judges and fans,
+while BT+J explains deviations observed in the show’s most debated seasons.
+
+\subsection{Bias--Variance Trade-off and Recommendation}
+
+The three aggregation rules differ not only in functional form but also in how they balance
+\emph{variance} from week-to-week fluctuations in fan votes against \emph{bias} in how they treat
+contestants with large or small fan bases.
+
+We decompose reconstructed fan support as
+\[
+F_{i,s,t} = \bar F_{i,s,t} + \varepsilon_{i,s,t},
+\]
+where $\bar F_{i,s,t}$ reflects the persistent fan-preference signal implied by our utility model,
+and $\varepsilon_{i,s,t}$ captures transient shocks such as media swings or voting surges.
+
+\paragraph{Rank Sum: low variance, high bias.}
+Rank Sum uses only the ordering of $\{F_{i,s,t}\}$, not their magnitudes. Small disturbances
+$\varepsilon_{i,s,t}$ that do not change ranks leave the outcome unchanged, making Rank Sum
+relatively robust to noise.  
+However, this robustness comes at a structural cost: Rank Sum treats
+\[
+F_{i,s,t}=0.40
+\quad\text{and}\quad
+F_{j,s,t}=0.22
+\]
+as only one “rank apart,” discarding the fact that one contestant receives nearly twice as many
+votes as the other. Equivalently, Rank Sum behaves as if
+\[
+|F_{i,s,t}-F_{j,s,t}| \approx \text{constant across pairs},
+\]
+an assumption that biases the rule against contestants with strong fan bases.
+
+This bias is visible in disagreement weeks. When Rank Sum and Percent Sum eliminate
+different contestants, the one eliminated by Rank Sum has on average
+\[
+\Delta F \approx 0.039 \quad\text{and}\quad \Delta J \approx 3
+\]
+\emph{higher} fan shares and judges' scores than the contestant eliminated by Percent Sum.
+Thus Rank Sum tends to remove objectively stronger contestants whenever fan and judge signals
+conflict.
+
+\paragraph{Percent Sum: higher variance, much lower bias.}
+The Percent Sum score,
+\[
+S^{\mathrm{pct}}_{i,s,t}
+= \frac{J_{i,s,t}}{\sum_{j}J_{j,s,t}} + F_{i,s,t},
+\]
+retains magnitude information from both judges and fans. It therefore reacts more strongly to
+disturbances $\varepsilon_{i,s,t}$ but also preserves the true scale of support.
+
+Empirically, this lower bias dominates the slightly higher variance. Applied to all seasons,
+Percent Sum achieves
+\[
+\text{Accuracy}^{\mathrm{pct}} \approx 0.766
+\qquad\text{vs.}\qquad
+\text{Accuracy}^{\mathrm{rank}} \approx 0.645,
+\]
+and Figure~\ref{fig:q2_gap_overall} shows that the season-level difference
+$\Delta^{\mathrm{pct}}_s$ is positive for the majority of seasons.  
+In short, Percent Sum aligns more closely with the actual elimination mechanism underlying the
+show's history.
+
+\paragraph{BT+J: additional judge bias without variance benefits.}
+The BT+J rule aims to reduce uncertainty by allowing judges to choose between the bottom two
+identified by Percent Sum.  
+In practice, BT+J performs worse on average than both Rank Sum and Percent Sum (right panel of
+Figure~\ref{fig:q2_gap_overall}).  
+Once a fan-favored but low-judge contestant enters the bottom two, the judges’ tie-break
+mechanism systematically eliminates them regardless of voting strength. This inflates judge-side
+bias and explains several ``zombie'' seasons such as Bristol Palin (S11, S15) and Bobby Bones
+(S27), where fan-favored contestants persist despite trailing in technical performance
+(pages~1–2 of the Problem C prompt summarizing these controversies\!%
+\textsuperscript{\protect\cite{EggersHauser2024}}).
+
+\paragraph{Recommendation.}
+Viewing the rules through a bias--variance lens clarifies their behavior:
+
+- Rank Sum has \emph{lower variance} but introduces \emph{systematic, structural bias} against
+  contestants with strong fan support.
+- Percent Sum has \emph{higher variance} but \emph{low bias}, preserving the scale of fan votes
+  and aligning most closely with the show’s realized eliminations.
+- BT+J amplifies judge-side bias and yields the lowest empirical accuracy of the three.
+
+Given these findings, we \textbf{recommend adopting the Percent Sum rule} as the primary
+aggregation mechanism for future seasons.  
+BT+J may still be useful as an infrequent tie-breaker, but our analysis suggests it should not be
+a routine weekly intervention.  
+This recommendation directly addresses the final component of Problem~2 and is strongly
+supported by the multi-season empirical trends observed in
+Figure~\ref{fig:q2_gap_overall}\,%
+\textsuperscript{\protect\cite{EggersHauser2024}}.
+
+
+
+% ===== 5. Validation and Results =====
+\section{Problem 3: Impact of Contestant Attributes and Professional Partners}
+
+In this section we use the reconstructed fan vote shares from Section~3 to quantify how
+contestant attributes---such as age, industry, nationality, and professional partner---shape
+fan support, judges' scores, and eventual placements. We retain the latent-utility structure of
+Section~3.2, but enrich the contestant-specific baseline term $a_{i,s}$ through both a linear
+and a nonlinear (GBDT) component learned from observable attributes.
+
+\subsection{Exploratory Data Analysis}
+
+EDA suggests these attribute–support relationships are not well captured by a single linear trend: fan-share is highly dispersed across ages with many near-zero observations and occasional high outliers, and nationality shows a “mass-at-low with a longer mid-range tail” pattern rather than a simple mean shift. In contrast, industry and (especially) pro partner exhibit clear distributional separation in fan-share levels and spread, motivating a flexible nonlinear component to capture heterogeneity and interactions.
+
+\subsection{Exploratory Evidence for Attribute Effects}
+
+Let $x_{i,s}$ denote the vector of contestant attributes in season $s$, including
+\[
+x_{i,s} = \bigl(\text{age}_{i,s},\ 
+               \text{industry}_{i,s},\
+               \text{pro}_{i,s},\
+               \text{homecountry}_{i,s}, \ldots\bigr).
+\]
+
+Using the reconstructed fan shares $\widehat{F}_{i,s,t}$ and standardized judges' scores
+$\widetilde{J}_{i,s,t}$ from Section~3, we summarize each contestant–season pair by
+\begin{align*}
+\widehat{a}_{i,s} 
+  &:= \text{estimated baseline fan strength},\\
+\overline{\widetilde{J}}_{i,s}
+  &:= \frac{1}{T_{i,s}} 
+      \sum_{t \in \mathcal{T}_{i,s}} \widetilde{J}_{i,s,t},\\
+W_{i,s}
+  &:= \text{observed elimination week}.
+\end{align*}
+Here $\mathcal{T}_{i,s}$ denotes the weeks in which contestant $(i,s)$ remained active.
+
+Figure~\ref{fig:fan-importance-age} visualizes how attributes affect baseline popularity.
+Panel~(a) compares age against all other features in the GBDT model; panel~(b) ranks the most
+important non-age predictors (industries and professional partners); panel~(c) shows the
+relationship between age and the attribute-driven utility
+$\eta_{i,s}^{(\mathrm{ml})}$ using individual points and a smoothed trend.
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=0.8\textwidth]{graphs/Fig4_5_combined}
+  \caption{
+  Attribute-based drivers of baseline fan popularity.
+  Panel~(a): age versus all other GBDT feature importance.
+  Panel~(b): most influential non-age attributes.
+  Panel~(c): relationship between age and attribute-driven utility 
+  $\eta_{i,s}^{(\mathrm{ml})}$ with individual contestants (dots) and a rolling-mean trend.
+  }
+  \label{fig:fan-importance-age}
+\end{figure}
+
+Several clear patterns emerge:
+
+\begin{itemize}
+  \item \textbf{Age effect.} Younger contestants exhibit noticeably higher baseline fan support.
+        The smoothed curve in panel~(c) decreases with age in a nonlinear, concave pattern.
+  \item \textbf{Industry effect.} Contestants from highly visible entertainment and sports fields
+        systematically receive stronger reconstructed fan support than those from less prominent
+        industries.
+  \item \textbf{Pro-partner effect.} Certain professional dancers correlate with consistently
+        higher fan baselines, indicating persistent audience loyalty to particular professionals.
+\end{itemize}
+
+These patterns are both nonlinear and interactive (e.g., the age effect differs by industry and
+professional partner). This motivates replacing the season-constant $a_{i,s}$ with a flexible,
+attribute-based model.
+
+\subsection{Utility Model with Attribute-Based Baseline Popularity}
+
+Recall the latent fan-utility model from Section~3.2,
+\[
+\eta_{i,s,t} = a_{i,s} 
+              + \beta_T \widetilde{J}_{i,s,t} 
+              + \beta_w t,
+\qquad
+F_{i,s,t} 
+= \frac{\exp(\eta_{i,s,t})}
+       {\sum_{j \in \mathcal{A}_{s,t}}
+        \exp(\eta_{j,s,t})}.
+\]
+
+Within a week $(s,t)$ it is convenient to interpret
+\[
+N_{i,s} := \exp(a_{i,s})
+\]
+as the \emph{baseline fan mass} for contestant $(i,s)$. Substituting yields
+\[
+F_{i,s,t}
+=
+\frac{
+  N_{i,s}\exp\!\{\beta_T \widetilde{J}_{i,s,t} + \beta_w t\}
+}{
+  \sum_{j\in\mathcal{A}_{s,t}}
+  N_{j,s}\exp\!\{\beta_T \widetilde{J}_{j,s,t} + \beta_w t\}
+}.
+\]
+The week trend $\beta_w t$ cancels between numerator and denominator, so \emph{only}
+differences in baseline masses $\{N_{i,s}\}$ and performance deviations
+$\widetilde{J}_{i,s,t}$ determine relative fan shares within that week.
+
+Consequently, for any pair of contestants $i$ and $j$ active in event $(s,t)$,
+\begin{equation}
+\log \frac{F_{i,s,t}}{F_{j,s,t}}
+  =
+  (a_{i,s} - a_{j,s})
+  + \beta_T\bigl(\widetilde{J}_{i,s,t} - \widetilde{J}_{j,s,t}\bigr).
+\label{eq:fan-odds}
+\end{equation}
+If $a_{i,s}$ increases by $\Delta$, holding judges' scores fixed, the fan-vote odds in favor of
+contestant $i$ increase by $\exp(\Delta)$ in every week they remain.  
+Equation~\eqref{eq:fan-odds} therefore provides a direct map from attribute-driven
+coefficients to the magnitude of fan advantage, allowing us to quantify how much age,
+industry, or pro-partner effects shift week-by-week voting outcomes.
+
+
+
+\subsection{Linear Attribute Model for Baseline Popularity}
+
+To quantify the impact of observable characteristics, we first fit an interpretable linear model
+for the estimated baseline fan strength:
+\begin{equation}
+\widehat{a}_{i,s}
+  = \alpha_F + \gamma_F^{\top} x_{i,s} + \varepsilon_{F,i,s}.
+\label{eq:linear-fan}
+\end{equation}
+Here $x_{i,s}$ contains age as a numeric covariate and one-hot indicators for industry, pro
+partner, and home country. The coefficient $\gamma_{F,k}$ associated with a given attribute
+$k$ measures the change in $\widehat{a}_{i,s}$ induced by a one-unit change in that attribute,
+holding the others fixed. Combining~\eqref{eq:linear-fan} with the odds ratio
+expression~\eqref{eq:fan-odds}, the effect of attribute $k$ on fan support can be written as
+\[
+\log \frac{F_{i,s,t}}{F_{j,s,t}}
+  \approx \gamma_{F,k} (x_{i,s}^{(k)} - x_{j,s}^{(k)})
+  + \beta_T\bigl(\widetilde{J}_{i,s,t} - \widetilde{J}_{j,s,t}\bigr),
+\]
+so that a difference of $\Delta x^{(k)}$ in attribute $k$ multiplies the fan-vote odds by
+$\exp\{\gamma_{F,k} \Delta x^{(k)}\}$. For example, if the dummy variable
+$\mathbb{1}\{\text{pro} = \text{Val}\}$ has coefficient $\gamma_{F,\text{Val}} > 0$, then, all else
+equal, being partnered with this professional dancer increases the fan-vote odds by a factor
+$\exp(\gamma_{F,\text{Val}})$ in every week.
+
+To compare fan and judge responses to the same attributes, we estimate analogous linear
+models for average judges' scores and competition longevity:
+\begin{align}
+\overline{\widetilde{J}}_{i,s}
+  &= \alpha_J + \gamma_J^{\top} x_{i,s} + \varepsilon_{J,i,s},
+\label{eq:linear-judge}\\
+W_{i,s}
+  &= \alpha_W + \gamma_W^{\top} x_{i,s} + \varepsilon_{W,i,s}.
+\label{eq:linear-comp}
+\end{align}
+The vectors $\gamma_J$ and $\gamma_W$ describe how attributes affect judges'
+assessments and overall survival, respectively. Comparing $\gamma_F$ to $\gamma_J$
+highlights attributes that primarily influence fan voting rather than performance-based
+evaluation.
+
+\subsection{Nonlinear Effects via Gradient Boosting Decision Trees}
+
+Exploratory results in Section~2 show that the relationship between $\widehat{a}_{i,s}$ and
+attributes such as age, industry, and professional partner is highly nonlinear and involves
+interactions (e.g., the effect of age differs for athletes versus actors). To capture these
+patterns without imposing restrictive functional assumptions, we estimate baseline popularity
+using a flexible nonparametric model:
+\begin{equation}
+\widehat{a}_{i,s} \approx f_{\mathrm{GBDT}}(x_{i,s}),
+\label{eq:gbdt-fan}
+\end{equation}
+where $f_{\mathrm{GBDT}}$ is a Gradient Boosting Decision Tree trained to minimize
+\[
+\sum_{i,s} \bigl(\widehat{a}_{i,s} - f_{\mathrm{GBDT}}(x_{i,s})\bigr)^2.
+\]
+Because GBDT expresses $f_{\mathrm{GBDT}}$ as a sum of shallow regression trees, it naturally
+accommodates nonlinearities and high-order interactions while retaining good generalization
+in modest sample sizes. We denote the predicted baseline utility by
+\[
+\eta_{i,s}^{(\mathrm{ml})} := f_{\mathrm{GBDT}}(x_{i,s}),
+\]
+interpreting it as an attribute-driven approximation to $a_{i,s}$.
+
+To compare how judges respond to the same attributes, we also fit a second GBDT,
+$f_{\mathrm{GBDT}}^{(J)}$, using the target $\overline{\widetilde{J}}_{i,s}$ (average standardized
+judges' score). Comparing feature importance and partial dependence between
+$f_{\mathrm{GBDT}}$ and $f_{\mathrm{GBDT}}^{(J)}$ highlights structural differences between fan and
+judge behavior: age, industry, and pro partner strongly influence baseline fan popularity but
+exert weaker and more linear effects on judges' scoring.
+
+To illustrate attribute-driven heterogeneity, we aggregate
+$\eta_{i,s}^{(\mathrm{ml})}$ by celebrity industry and by professional partner.
+Figure~\ref{fig:fan-industry-pro} displays these distributions: panel~(a) shows industry-level
+differences, and panel~(b) highlights the most frequently appearing professional dancers.
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=\textwidth]{graphs/Fig6_industry_pro}
+  \caption{
+  Baseline fan popularity by industry and professional partner.
+  Panel~(a): distribution of attribute-driven utilities $\eta_{i,s}^{(\mathrm{ml})}$ by celebrity
+  industry.
+  Panel~(b): the same distribution for top professional dancers.
+  Boxes show interquartile ranges; whiskers span 1.5 IQR.
+  }
+  \label{fig:fan-industry-pro}
+\end{figure}
+
+\paragraph{Interpretation.}
+This subsection evaluates how observable attributes shape the baseline fan mass
+$N_{i,s}=\exp(a_{i,s})$ that feeds into the softmax voting model. Because
+\[
+\log\frac{F_{i,s,t}}{F_{j,s,t}}
+=
+(a_{i,s}-a_{j,s})
++
+\beta_T\!\bigl(\widetilde{J}_{i,s,t}-\widetilde{J}_{j,s,t}\bigr),
+\]
+differences in $a_{i,s}$ translate directly into persistent multiplicative advantages
+$\exp(a_{i,s}-a_{j,s})$ in week-to-week fan-vote odds. Mapping $a_{i,s}$ to attributes
+$x_{i,s}$ therefore quantifies how features such as age, industry visibility, and
+professional partner affect structural competitive leverage.
+
+We estimate $a_{i,s}$ using (i) a linear model
+$a_{i,s}\approx \alpha_F + \gamma_F^\top x_{i,s}$, which gives interpretable additive
+effects on $\log N_{i,s}$, and (ii) a nonlinear GBDT model
+$a_{i,s}\approx f_{\mathrm{GBDT}}(x_{i,s})$ that captures curvature and interactions.
+Both models agree: younger contestants, contestants from attention-heavy entertainment or
+sports industries, and those paired with high-profile professionals systematically receive
+larger reconstructed $a_{i,s}$ values. Because $N_{i,s}$ scales fan odds multiplicatively,
+even moderate attribute differences accumulate into substantial and persistent voting
+advantages across weeks.
+
+A parallel GBDT analysis for standardized judges’ scores reveals far weaker and more linear
+attribute effects, confirming that judges primarily respond to performance rather than
+structural popularity.
+
+Overall, the evidence shows that contestant attributes exert strong, nonlinear, and
+enduring influence on fan support, while affecting judges’ evaluations only lightly. This
+identifies fan-driven mechanisms as the main channel through which attributes shape
+competition outcomes, addressing the core question of Problem~3.
+
+
+% ===== 6. Sensitivity / Uncertainty =====
+\section{A Constrained Hybrid Elimination System}
+
+We propose a weekly elimination mechanism that balances \emph{fairness}, \emph{fan engagement},
+and \emph{competitive excitement}. The design integrates reconstructed fan utilities, judges’
+scores, and short-term dynamics through a transparent rule set with explicit safeguards for both
+technical skill and popularity.
+
+\subsection{System Inputs and Score Components}
+
+For season $s$ and week $t$, let $\mathcal{A}_{s,t}$ denote the active contestants and
+$|\mathcal{A}_{s,t}| = n_{s,t}$. For each contestant $i \in \mathcal{A}_{s,t}$ we use:
+\[
+J_{i,s,t} \text{ (judges’ total score)}, \quad
+\eta_{i,s,t} \text{ (latent fan utility from Problem~1)}, \quad
+\tilde F_{i,s,t} \text{ (historical fan share)}, \quad
+Y_{i,s,t}\in\{0,1\}.
+\]
+
+\paragraph{Fan influence.}
+Fan preference is expressed through a temperature-controlled softmax
+\[
+F^{(\gamma)}_{i,s,t}
+=
+\frac{\exp(\gamma\eta_{i,s,t})}
+     {\sum_{j\in\mathcal{A}_{s,t}}\exp(\gamma\eta_{j,s,t})},
+\qquad 0<\gamma\le1,
+\]
+where smaller $\gamma$ produces flatter fan distributions and larger $\gamma$ amplifies
+underlying differences in fan mass.
+
+\paragraph{Judges.}
+Weekly judges' scores are normalized to place them on the same scale as fan shares:
+\[
+J^{\mathrm{pct}}_{i,s,t}
+=
+\frac{J_{i,s,t}}{\sum_{j\in\mathcal{A}_{s,t}} J_{j,s,t}} .
+\]
+
+\paragraph{Momentum.}
+Short-term surges in public sentiment are summarized by
+\[
+M_{i,s,t}
+=
+\max\!\left(
+0,\;
+\tilde F_{i,s,t}
+-
+\frac{1}{K}\sum_{\tau=t-K}^{t-1}\tilde F_{i,s,\tau}
+\right),
+\]
+where $K$ is a short lookback window (e.g., $2$--$3$). Positive values indicate upward fan
+momentum relative to recent weeks.
+
+\paragraph{Phase-dependent weighting.}
+Let $T_s$ be total weeks in season $s$ and
+\[
+\phi_{s,t}=\frac{t-1}{T_s-1}\in[0,1]
+\]
+be the normalized season phase. Judges’ influence increases as the season progresses, modeled
+by
+\[
+\alpha_{J,s,t}
+=
+\alpha_J^{(0)} + (\alpha_J^{(1)} - \alpha_J^{(0)})\,\phi_{s,t}, 
+\qquad
+\alpha_{F,s,t}
+=
+1 - \alpha_{J,s,t} - \alpha_M,
+\]
+with fixed $\alpha_M\ge0$.
+
+\paragraph{Hybrid risk score.}
+These components combine to form the week-specific risk score
+\[
+S_{i,s,t}
+=
+\alpha_{J,s,t} J^{\mathrm{pct}}_{i,s,t}
++
+\alpha_{F,s,t} F^{(\gamma)}_{i,s,t}
++
+\alpha_M M_{i,s,t},
+\]
+where smaller $S_{i,s,t}$ indicates greater elimination risk.
+
+\subsection{Elimination Procedure}
+
+The weekly elimination follows a structured two-stage process.
+
+\subsubsection*{(1) Bottom-two identification}
+Contestants are ranked by $S_{i,s,t}$, and the two lowest-ranked contestants form
+\[
+B_{s,t}=\text{two contestants with smallest }S_{i,s,t}.
+\]
+
+\subsubsection*{(2) Fairness safeguards}
+Before elimination, two protections are applied:
+\begin{itemize}[leftmargin=*]
+\item \textbf{Judge Shield:} any contestant in the top two of $J^{\mathrm{pct}}_{i,s,t}$ is protected.
+\item \textbf{Fan Shield:} any contestant with $F^{(\gamma)}_{i,s,t} \ge \theta$ is protected.
+\end{itemize}
+If a protected contestant appears in $B_{s,t}$, it is replaced by the next-lowest unprotected
+contestant in $S_{i,s,t}$.
+
+\subsubsection*{(3) Final elimination}
+Fan influence determines the final removal among the filtered bottom two:
+\[
+k_{s,t}^\ast
+=
+\arg\min_{i\in B_{s,t}}
+F^{(\gamma)}_{i,s,t}.
+\]
+Judges determine who enters the danger zone; fans determine who exits the show.
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=0.75\textwidth]{graphs/performance.png}
+\caption{
+Performance of the Constrained Hybrid Elimination Rule (CHER).
+\textbf{(a)} Accuracy–conflict trade-off: CHER lies near the empirical Pareto frontier, achieving
+high hit rate with moderated judge–fan disagreement.
+\textbf{(b)} Phase-dependent weights showing the shift from fan influence early in the season to
+greater judge influence later.
+\textbf{(c)} System-level comparison against judge-only and fan-only baselines in accuracy,
+conflict rate, and fan-share variance.
+\textbf{(d)} Example weekly decomposition of $S_{i,s,t}$ into judge, fan, and momentum components;
+the dashed line marks the observed elimination.}
+
+  \label{fig:cher_system_performance}
+\end{figure}
+
+
+\subsection{Fairness, Excitement, and Trade-Off Analysis}
+
+\paragraph{Fairness.}
+The Judge Shield and Fan Shield guarantee that neither top technical performers nor strong
+fan favorites are eliminated due to isolated randomness. Momentum rewards sustained progress,
+so improvements accumulate rather than being masked by noise.
+
+\paragraph{Excitement.}
+Bottom-two filtering focuses uncertainty on contestants near the elimination threshold,
+preserving suspense without destabilizing the competition. Fan-determined eliminations
+maintain audience agency, and momentum allows for comeback arcs that are consistent with the
+data’s week-to-week variation.
+
+\paragraph{Judge--Fan Conflict.}
+Conflicts occur only within $B_{s,t}$ and never involve contestants who dominate either voting
+dimension. This makes conflict an intentional design feature: it increases engagement without
+creating headline-level unfairness.
+
+\paragraph{Trade-Off.}
+Simulations show that CHER trades a small reduction in predictive accuracy for substantially
+lower fan-share inequality and explicit fairness guarantees. As illustrated in
+Figure~\ref{fig:cher_system_performance}, the system sits near the Pareto frontier of
+accuracy versus conflict, stabilizing outcomes across the season while promoting competitiveness.
+
+\paragraph{Interpretation.}
+CHER converts reconstructed fan utilities, normalized judges’ scores, momentum, and season
+phase into a deterministic elimination rule with transparent protections. The model avoids
+the common failure modes of single-formula systems—eliminating dominant contestants or
+over-amplifying weekly noise—by placing structure only where needed: identifying the risk
+set and delegating the final decision to fans. Empirically, the mechanism reduces extreme
+judge- or fan-driven distortions and maintains consistency with historical patterns, providing
+a principled and fair alternative aligned with the goals of Problem~4.
+
+
+% ===== 8. Strengths and Limitations =====
+\section{Strengths and Limitations}
+
+\subsection{Strengths}
+
+\begin{itemize}
+    \item \textbf{Coherent statistical framework.}
+    All results—from fan-share reconstruction to rule evaluation—stem from the same
+    Poisson--random-utility foundation, ensuring internal consistency.
+
+    \item \textbf{High empirical alignment.}
+    The reconstructed fan shares accurately reproduce historical eliminations,
+    providing a validated basis for counterfactual voting-rule comparisons.
+
+    \item \textbf{Interpretable structure.}
+    Parameters such as $a_{i,s}$ and $\beta_T$ map directly to baseline
+    popularity and performance effects, giving the model clear practical meaning.
+
+    \item \textbf{Flexible attribute effects.}
+    Linear and GBDT components capture both simple and nonlinear relationships
+    between contestant attributes and baseline fan strength.
+
+    \item \textbf{Transparent hybrid system (CHER).}
+    The proposed rule is easy to implement: judges set the risk pool, fans decide
+    within it, and fairness protections prevent extreme or clearly unjust outcomes.
+\end{itemize}
+
+\subsection{Limitations}
+
+\begin{itemize}
+    \item \textbf{Dependence on reconstructed fan shares.}
+    All inference relies on $\widehat{F}_{i,s,t}$, which is model-based rather than
+    directly observed.
+
+    \item \textbf{Simplifying behavioural assumptions.}
+    The additive utility form and Gumbel noise may not capture all real-world
+    voting dynamics (e.g., coordinated fan campaigns or media shocks).
+
+    \item \textbf{Approximate momentum measurement.}
+    Momentum is inferred from estimated fan shares, which may smooth or distort
+    true week-to-week volatility.
+
+    \item \textbf{CHER parameter sensitivity.}
+    Weights and thresholds (\(\gamma, \alpha_J^{(0)}, \alpha_J^{(1)}, \theta\))
+    reflect policy choices; different settings change the fairness–excitement balance.
+
+    \item \textbf{Counterfactual stability.}
+    Voting-rule comparisons assume static behaviour; in practice, rule changes may
+    alter how fans and judges respond.
+\end{itemize}
+
+
+
+
+
+\begin{letter}{Memorandum}
+\begin{flushleft}  % 左对齐环境，无首行缩进
+\textbf{To:} Producers of Dancing with the Stars \\
+\textbf{From:} Team 2631685\\
+\textbf{Date:} February 2nd 2026\\
+\textbf{Subject:} Strategic Recommendations on Optimizing Voting Mechanisms to Balance Fairness and Audience Engagement
+\end{flushleft}
+
+Dear Producers,
+
+As a phenomenal show defining the boundary between ``professional competition'' and ``mass entertainment,'' \textit{Dancing with the Stars} has successfully run for 34 seasons. However, our analysis shows that the show faces an increasingly severe challenge: How to respond to rising fan demands while maintaining dance professionalism? According to our team's investigation, excluding the recent 34th season, the ratings have been in a continuous state of decline over the years.
+
+Standing on the threshold of Season 35, we believe repairing the old system is insufficient; now is the best time for a systematic upgrade. Based on full reconstruction and modeling of data from the past 34 seasons, we bring you the following key findings and recommendations:
+
+Through counterfactual simulation, we found structural defects in both existing core mechanisms. The \textbf{Rank-Sum method}, currently in use, is completely unsuitable for raising fan enthusiasm because it flattens the vote advantage of highly popular contestants. Even if a popular contestant has one million more votes than an opponent, it is only a one-place difference in ranking. This completely obliterates the weight of massive fan voting, causing popular contestants to be easily eliminated due to slightly lower judge scores, or directly killed off by the current ``Bottom Two + Judges' Choice'' method---a process in which fans cannot participate at all.
+
+The \textbf{Percent-Sum method}, while retaining vote gaps and being relatively fair, is too sensitive to random noise. Extreme vote-farming behaviors or single-week public opinion fluctuations could instantly destroy the entire season of a technical contestant.
+
+Furthermore, the \textbf{Bottom Two + Judges' Choice (BT+J)} itself has problems. While originally intended to save ``hidden gems,'' it actually extremely amplifies the judges' subjective bias. Once a popular but technically weaker contestant falls into the danger zone, judges tend to mechanically eliminate them. This act of ``judges forcibly reversing public will'' can quite easily cause negative public opinion outbreaks in our variety show, which sells itself on stars and character development.
+
+However, if one must be chosen among the three existing rules, we recommend prioritizing the \textbf{Percent-Sum method}. Compared to the ``one-size-fits-all'' Rank method and the BT+J method that leads to judicial dictatorship, the Percent method at least truthfully reflects the intensity of fan engagement. Before a new system is introduced, this is the optimal solution to maintain a sense of fairness.
+
+But in our view, to thoroughly reverse the ratings slump, simply patching old systems is of no avail. We have tailored a brand new \textbf{Constrained Hybrid Elimination System (CHER)} for you. This is not just a mathematical model, but a ratings harvester that combines drama and fairness!
+
+In our new system, we designed a \textbf{Momentum Indicator} to reward contestants who are in a rising phase and constantly improving. This gives their fan votes higher weight, fitting the audience's psychological expectation of seeing a ``rookie counterattack'' script, which can greatly increase user stickiness.
+
+We also designed a \textbf{Fairness Shield mechanism} to ensure fairness. The system will automatically identify and protect the technically strongest and most popular contestants. This means we preserve both professional reputation and traffic drivers, putting an end to the accidental elimination of main players.
+
+Furthermore, we have stripped the judges of the power to decide the life or death of the bottom two, and we have returned the final power of life and death completely to fan voting! This not only eliminates suspicion of ``black box operations'' but also creates huge suspense at the show's final moments, maximizing fan voting enthusiasm. Additionally, in this streaming era, this clearly stirs up conflict between fan bases rather than turning the spearhead toward the show, which increases show traffic without receiving excessive negative public opinion.
+
+Therefore, in summary: The old era's competition format is overdrawing the audience's patience. Adopting the CHER system allows us to not only effectively avoid extreme controversial results (such as technically terrible contestants not being eliminated, or extremely high popularity contestants being unexpectedly ousted) but also retain the core suspense of a reality show. We firmly believe that this data science-based optimization will be the key move to help \textit{Dancing with the Stars} achieve a ratings reversal and return to its peak in Season 35.
+
+\end{letter}
+
+% ===== References =====
+% \begin{thebibliography}{99}
+% \bibitem{comap_rules}
+% \bibliographystyle{unsrtnat}
+
+% COMAP, \emph{MCM/ICM Contest Instructions}. % cite official sources in your final PDF
+% \end{thebibliography}
+\bibliographystyle{plain} 
+\bibliography{reference}
+
+% ===== Appendices (count toward 25 pages!) =====
+\begin{subappendices}
+\appendix
+\section*{Appendix A: Mathematical Details for Consistency Analysis}
+
+\subsection*{A.1 Scoring Rules}
+
+\paragraph{Percent-Sum.}
+\[
+S^{\mathrm{pct}}_{i,s,t}
+=
+J^{\mathrm{pct}}_{i,s,t} + \widehat{F}_{i,s,t},
+\qquad
+J^{\mathrm{pct}}_{i,s,t}
+=
+\frac{J_{i,s,t}}{\sum_{j\in\mathcal{A}_{s,t}} J_{j,s,t}}.
+\]
+
+\paragraph{Rank-Sum.}
+\[
+r^J_{i,s,t}=\mathrm{rank}_{\mathrm{asc}}(-J_{i,s,t}),\qquad
+r^F_{i,s,t}=\mathrm{rank}_{\mathrm{asc}}(-\widehat{F}_{i,s,t}),
+\qquad
+C_{i,s,t}=r^J_{i,s,t}+r^F_{i,s,t}.
+\]
+
+\subsection*{A.2 Prediction Rules}
+\[
+\widehat{k}^{\mathrm{pct}}_{s,t}=\arg\min_{i} S^{\mathrm{pct}}_{i,s,t},\qquad
+\widehat{k}^{\mathrm{rank}}_{s,t}=\arg\max_{i} C_{i,s,t}.
+\]
+
+\subsection*{A.3 Summary Metrics}
+
+\paragraph{Event-level accuracy.}
+\[
+A_{\mathrm{model}}
+=
+\frac{1}{|\mathcal{T}_{\mathrm{elim}}|}
+\sum_{(s,t)\in\mathcal{T}_{\mathrm{elim}}}
+\mathbf{1}\{\widehat{k}^{\mathrm{scheme}(s,t)}_{s,t}=k_{s,t}\}.
+\]
+
+\paragraph{Worst rank.}
+\[
+r^{\mathrm{pct}}_{s,t}
+=
+1+\#\{j:S^{\mathrm{pct}}_{j,s,t}<S^{\mathrm{pct}}_{k_{s,t},s,t}\},
+\]
+\[
+r^{\mathrm{rank}}_{s,t}
+=
+1+\#\{j:C_{j,s,t}>C_{k_{s,t},s,t}\}.
+\]
+
+\paragraph{Average worst percentile.}
+\[
+\overline{q}
+=
+\frac{1}{|\mathcal{T}_{\mathrm{elim}}|}
+\sum_{(s,t)} \frac{r_{s,t}}{|\mathcal{A}_{s,t}|}.
+\]
+
+\paragraph{Pairwise satisfaction.}
+\[
+s^{\mathrm{pct}}_{s,t}
+=
+\frac{1}{|\mathcal{A}_{s,t}|-1}
+\sum_{j\ne k_{s,t}}
+\mathbf{1}\{S^{\mathrm{pct}}_{k_{s,t},s,t}\le S^{\mathrm{pct}}_{j,s,t}\},
+\]
+and analogously for Rank-Sum. The overall satisfaction rate is
+\[
+\overline{s}
+=
+\frac{1}{|\mathcal{T}_{\mathrm{elim}}|}
+\sum_{(s,t)} s_{s,t}.
+\]
+
+\paragraph{Margins.}
+\[
+m^{\mathrm{pct}}_{s,t}
+=
+\min_{j\ne k_{s,t}}
+\left(S^{\mathrm{pct}}_{j,s,t}-S^{\mathrm{pct}}_{k_{s,t},s,t}\right),
+\]
+\[
+m^{\mathrm{rank}}_{s,t}
+=
+C_{k_{s,t},s,t}
+-
+\max_{j\ne k_{s,t}} C_{j,s,t}.
+\]
+
+\subsection*{A.4 Combined score}
+\[
+S_{i,s,t}
+=
+\widehat{F}_{i,s,t}
++
+\frac{J_{i,s,t}}
+     {\sum_{j\in\mathcal{A}_{s,t}} J_{j,s,t}}.
+\]
+
+\subsection*{A.5 Pairwise defeat probability}
+\[
+\Pr(i \text{ loses to } j \mid t)
+=
+sigmoid\!\left(\alpha\,(S_{j,s,t}-S_{i,s,t})\right),
+\qquad
+sigmoid(x)=(1+e^{-x})^{-1},
+\]
+with fixed $\alpha = 20$.
+
+\subsection*{A.6 Unnormalized elimination weight}
+\[
+w_{i,s,t}
+=
+\prod_{j\in\mathcal{A}_{s,t},\, j\ne i}
+sigmoid\!\left(\alpha\,(S_{j,s,t}-S_{i,s,t})\right).
+\]
+
+\subsection*{A.7 Gibbs-normalized elimination probability}
+\[
+p_{i,s,t}
+=
+\frac{w_{i,s,t}}{\sum_{k\in\mathcal{A}_{s,t}} w_{k,s,t}}.
+\]
+
+\paragraph{Energy form.}
+Defining $E_{i,s,t}=-\log w_{i,s,t}$,
+\[
+p_{i,s,t}
+=
+\frac{\exp(-E_{i,s,t})}
+     {\sum_{k\in\mathcal{A}_{s,t}} \exp(-E_{k,s,t})}.
+\]
+
+\subsection*{A.8 Certainty statistic}
+If $k_{s,t}$ is the observed eliminated contestant,
+\[
+\mathrm{Certainty}_{s,t}
+=
+p_{k_{s,t},s,t}.
+\]
+
+\subsection*{A.9 Aggregated certainty measures}
+\[
+\text{Accuracy}
+=
+\Pr\bigl(\arg\max_i p_{i,s,t} = k_{s,t}\bigr),
+\]
+\[
+\overline{\mathrm{Certainty}}
+=
+\mathbb{E}\!\left[p_{k_{s,t},s,t}\right],
+\qquad
+\mathrm{MedianCertainty}
+=
+\operatorname{median}_t p_{k_{s,t},s,t},
+\]
+\[
+\text{LogLik}
+=
+\sum_{(s,t)} \log p_{k_{s,t},s,t},
+\qquad
+\text{UniformBaseline}
+=
+\mathbb{E}\!\left[\frac{1}{|\mathcal{A}_{s,t}|}\right].
+\]
+
+\end{subappendices}
+
+% ===== AI Use Report (NOT counted in 25 pages, include only if you used AI tools) =====
+% \clearpage
+% \section*{Report on Use of AI Tools}
+% Tool: OpenAI ChatGPT (model/version/date)
+% Query 1: ...
+% Output summary: ...
+% How it was used in the report: ...
+% (Follow COMAP AI policy examples.)
+\section*{Report on Use of AI Tools}
+% 中文注释：按 COMAP 要求，把这一节放在主报告（25页）之后；这一节通常不计入 25 页限制。
+% 中文注释：务必“如实披露”。如果完全没用 AI，也可以写一句 "No AI tools were used."
+
+\subsection*{Overview}
+% 中文注释：这一段用来概述你们用 AI 的范围和原则（例如：只用于润色/翻译/代码补全，不用于核心结论）。
+In this report, we disclose the AI-assisted tools used during the preparation of our submission, including their purposes and the extent of their use. AI tools were used during the project for the purposes outlined below. All model design decisions, mathematical derivations, numerical experiments, and final interpretations were verified by the team. Due to the iterative and interactive nature of AI-assisted development,
+some intermediate prompts and inputs cannot be fully reconstructed.
+However, all major results were independently verified through
+alternative methods and sensitivity analyses.
+
+
+\subsection*{Tools Usage Summary}
+% 中文注释：列出所有用过的 AI / 自动补全 / 翻译等（越具体越好：工具名+版本/日期+用途）。
+% 中文注释：如果只用于翻译，通常不需要贴完整 prompt；若用于生成内容/代码/结构，建议贴关键 prompt/输出摘要。
+\subsubsection*{Tool 1: ChatGPT}
+\begin{itemize}
+  \item \textbf{OpenAI ChatGPT (model: 5.2, accessed on various devices: MacOs, 
+Windows 10/11，etc}:
+ Based on available information, ChatGPT was used during development for brainstorming, exploratory analysis, and drafting support. The team is not aware of any AI-generated content being copied verbatim into the final submission. Any retained ideas were subject to independent review, re-implementation, and verification by the team.(On the interval of MCM period （January 29 - February 2, 2026）)}.
+ \subsubsection*{Tool 2: Gemini}
+  \begin{itemize}
+\end{itemize}
+  \item \textbf{Google Gemini (Advanced) During the MCM Period -- January 29 - February 2, 2026)}:
+  Used for Structural Building, Generating ideas, Algorithm's framework Generating codes,codes autocompletion for designing models and implementing ,etc)}.
+  % 中文注释：例：Used for English polishing, outlining sections, drafting non-technical phrasing, and generating plotting boilerplate.
+
+
+  Used for code autocompletion while implementing general mathematical models.
+  % 中文注释：例：Used for Python autocompletion in data cleaning and figure plotting.
+ \subsubsection*{Tool 3: Translation Tools}
+  \begin{itemize}
+  \end{itemize}
+  \item \textbf{Translation tool (name/version/date: ChatGPT Model(Free),  ChatGPT 5.2  Used in Feb 1 2026 for both}:
+  Used for translating terminologies}.
+  
+\subsubsection*{Tool 4: Claude Anthropic}
+   \item \textbf{Claude Sonnet 4.5 (name/version/date: Estimated Jan30 - Jan 31 2026, We used AI tools during development to explore solution approaches and generate code preliminary drafts. Based on available information, No known AI-generated code was copied from this model verbatim into the final submission; any retained ideas were re-implemented and verified by the team. )}:
+  % 中文注释：如果你们只用 AI 做翻译，把这里写清楚即可。
+\end{itemize}
+
+
+\subsection*{Statement of Responsibility}
+% 中文注释：这一段很关键：强调人类负责、AI 仅辅助、结果人工核验。
+We affirm that the final submission represents our team’s original work. AI tools, when used, served as assistants during development, including drafting, language polishing, translation, exploratory analysis, and routine code autocompletion. All mathematical modeling choices, computations, experiments, and conclusions were performed and verified by the team.
+
+% ================================
+% Optional: Cite AI tools in References (if your main paper has References)
+% 中文注释：你也可以在参考文献里加 AI 工具条目（不同学校/格式要求不同）。
+% ================================
+% Example (BibTeX idea):
+% @misc{chatgpt,
+%   author = {OpenAI},
+%   title = {ChatGPT},
+%   year = {2026},
+%   note = {Accessed: 2026-01-28}
+% }
+
+
+
+\end{document}
